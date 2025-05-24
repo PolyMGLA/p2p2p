@@ -31,26 +31,57 @@ class RemoteNode:
 
 class Node:
     is_connected: bool = False
+    parent: RemoteNode
     user_host: str
     user_port: int
-    peer: tuple[str, int]
     connected_list: list[RemoteNode]
-    reader: asyncio.StreamReader
-    writer: asyncio.StreamWriter
     stop_event: asyncio.Event
     messages: list[tuple]
+    listening_task: asyncio.Task
 
     def __init__(self, host: str, port: int):
         self.user_host = host
         self.user_port = port
         self.connected_list = []
         self.messages = []
+        self.listening_task = None
 
     async def connect(self, host: str, port: int):
-        self.peer = (host, port)
+        peer = (host, port)
 
-        self.reader, self.writer = await asyncio.open_connection(*self.peer)
+        reader, writer = await asyncio.open_connection(*peer)
+        self.parent = RemoteNode(peer, reader, writer)
+
         self.is_connected = True
+        
+        self.listening_task = asyncio.create_task(self.listen_server())
+
+    def disconnect(self):
+        if self.is_connected:
+            self.writer.close()
+            self.is_connected = False
+            self.listening_task.cancel()
+
+    async def listen_server(self):
+        try:
+            while self.is_connected:
+                data = await self.parent.reader.read(1024)
+                if not data:
+                    self.is_connected = False
+                    self.messages.append(("disconnected", self.parent.peer, "Connection closed by server"))
+                    break
+                
+                messages = list(map(lambda x: x.decode(), data.split(b"\x00")))
+                for msg in messages:
+                    if msg == "":
+                        continue
+                    elif msg == "heartbeat":
+                        self.parent.time = TIMEOUT
+                    else:
+                        self.messages.append(("message", self.parent.peer, msg))
+        except Exception as e:
+            self.messages.append(("error", self.parent.peer, f"Listening error: {str(e)}"))
+            self.is_connected = False
 
     async def client_connected_cb(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
         peername = writer.get_extra_info("peername")
@@ -79,6 +110,8 @@ class Node:
 
                     # TODO: стопорит сервер, надо исправить ошибку, чтобы нода читала с self.reader, если можно
                 
+                    self.parent.time = max(0, self.parent.time - 1)
+
                 removing = []
                 
                 for user in self.connected_list:
@@ -87,7 +120,7 @@ class Node:
                         removing.append(user)
                         continue
 
-                    data = list(map(lambda x: x.decode(), (await user.get(128)).split(b"\x00")))
+                    data = list(map(lambda x: x.decode(), (await user.get(1024)).split(b"\x00")))
 
                     for el in data:
                         if el == "":
@@ -107,21 +140,22 @@ class Node:
         except (KeyboardInterrupt, asyncio.exceptions.CancelledError):
             print("closing")
         except Exception as e:
-            print(e)
+            print(str(e))
         finally:
             self.server.close()
+            self.disconnect()
             await self.server.wait_closed()
 
-    async def stop_server(self):
+    def stop_server(self):
         self.stop_event.set()
 
     async def send(self, message: bytes):
-        self.writer.write(message + b"\x00")
+        self.parent.writer.write(message + b"\x00")
 
-        await self.writer.drain()
+        await self.parent.writer.drain()
 
     async def get(self, count: int):
-        return await self.reader.read(count)
+        return await self.parent.reader.read(count)
     
     async def send_ping(self):
         await self.send(b"heartbeat")
@@ -135,7 +169,7 @@ class Node:
         printf("client data", 40)
         print("client:", (self.user_host, self.user_port))
         if self.is_connected:
-            print("connected to server", self.peer)
+            print("connected to server", self.parent.peer)
         else:
             print("not connected to any server")
         
