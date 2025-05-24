@@ -7,8 +7,7 @@ async def main(node: Node):
     await node.connect(network_host, network_port)
 
     await node.send(b"connected")
-    resp = (await node.get(128)).decode("utf-8")
-    print(resp)
+    
     await node.start_server()
 
 if __name__ == "__main__":

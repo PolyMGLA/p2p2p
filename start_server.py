@@ -4,7 +4,7 @@ from node import Node
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser("P2P2P", "python main.py [user_host] [user_port]")
+    parser = argparse.ArgumentParser("P2P2P", "python start_server.py [user_host] [user_port]")
     parser.add_argument("user_host", type=str, help="your host")
     parser.add_argument("user_port", type=int, help="your port")
 
