@@ -48,10 +48,13 @@ class Node:
             while not self.stop_event.is_set():
                 if self.is_connected:
                     await self.send_ping()
+                
+                removing = []
+                
                 for user in self.connected_list:
-                    if user[3] <= 0:
+                    if user[3] == 0:
                         self.messages.append(("disconnected", user[0], ""))
-                        self.connected_list.remove(user)
+                        removing.append(user)
                         continue
 
                     data = list(map(lambda x: x.decode(), (await user[1].read(128)).split(b"\x00")))
@@ -64,11 +67,14 @@ class Node:
                         else:
                             self.messages.append(("message", user[0], el))
                     
-                    user[3] -= 1
+                    user[3] = max(0, user[3] - 1)
+
+                for user in removing:
+                    self.connected_list.remove(user)
 
                 await self.print_state()
                 await asyncio.sleep(0.1)
-        except KeyboardInterrupt or asyncio.exceptions.CancelledError:
+        except (KeyboardInterrupt, asyncio.exceptions.CancelledError):
             print("closing")
         except Exception as e:
             print(e)
