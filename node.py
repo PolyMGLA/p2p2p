@@ -1,7 +1,9 @@
 import asyncio
 import socket
+import os
+from utils import printf
 
-TIMEOUT = 100
+TIMEOUT = 101
 
 class Node:
     is_connected: bool = False
@@ -13,11 +15,13 @@ class Node:
     reader: asyncio.StreamReader
     writer: asyncio.StreamWriter
     stop_event: asyncio.Event
+    messages: list[tuple]
 
     def __init__(self, host: str, port: int):
         self.user_host = host
         self.user_port = port
         self.connected_list = []
+        self.messages = []
 
     async def connect(self, host: str, port: int):
         self.conn_host = host
@@ -46,27 +50,26 @@ class Node:
                     await self.send_ping()
                 for user in self.connected_list:
                     if user[3] <= 0:
-                        print("disconnected", user[0])
+                        self.messages.append(("disconnected", user[0], ""))
                         self.connected_list.remove(user)
                         continue
 
                     data = list(map(lambda x: x.decode(), (await user[1].read(128)).split(b"\x00")))
                     while "" in data:
                         data.remove("")
-                    
-                    messages = []
 
                     for el in data:
                         if el == "heartbeat":
                             user[3] = TIMEOUT
                         else:
-                            messages.append(el)
+                            self.messages.append(("message", user[0], el))
                     
-                    if len(messages) > 0:
-                        print(user[0], messages, user[3])
                     user[3] -= 1
 
+                await self.print_state()
                 await asyncio.sleep(0.1)
+        except KeyboardInterrupt or asyncio.exceptions.CancelledError:
+            print("closing")
         except Exception as e:
             print(e)
         finally:
@@ -86,3 +89,20 @@ class Node:
     
     async def send_ping(self):
         await self.send(b"heartbeat")
+
+    async def print_state(self):
+        os.system("clear")
+        printf("P2P2P client", 40)
+        print("\n" * max(0, 9 - len(self.messages)))
+        for el in self.messages[-10:]:
+            print(el)
+        printf("client data", 40)
+        print("client:", (self.user_host, self.user_port))
+        if self.is_connected:
+            print("connected to server", (self.conn_host, self.conn_port))
+        else:
+            print("not connected to server")
+        
+        printf("connected users", 40)
+        for el in self.connected_list:
+            print(el[0], el[3])
