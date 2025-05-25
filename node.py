@@ -56,11 +56,12 @@ class Node:
         
         self.listening_task = asyncio.create_task(self.listen_server())
 
-    def disconnect(self):
+    async def disconnect(self):
         if self.is_connected:
-            self.writer.close()
+            self.parent.writer.close()
             self.is_connected = False
             self.listening_task.cancel()
+
 
     async def listen_server(self):
         try:
@@ -68,7 +69,7 @@ class Node:
                 data = await self.parent.reader.read(1024)
                 if not data:
                     self.is_connected = False
-                    self.messages.append(("disconnected", self.parent.peer, "Connection closed by server"))
+                    self.messages.append(("disconnected", self.parent.peer, "connection closed by server"))
                     break
                 
                 messages = list(map(lambda x: x.decode(), data.split(b"\x00")))
@@ -79,9 +80,19 @@ class Node:
                         self.parent.time = TIMEOUT
                     else:
                         self.messages.append(("message", self.parent.peer, msg))
+                self.parent.time = max(0, self.parent.time - 1)
+                if not self.parent.time:
+                    self.is_connected = False
+                    self.messages.append(("disconnected", self.parent.peer, "connection closed by server"))
+                    break
+
+                await self.send_ping()
+
+                await asyncio.sleep(0.1)
         except Exception as e:
-            self.messages.append(("error", self.parent.peer, f"Listening error: {str(e)}"))
+            self.messages.append(("error", self.parent.peer, f"listening error: {str(e)}"))
             self.is_connected = False
+            
 
     async def client_connected_cb(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
         peername = writer.get_extra_info("peername")
@@ -93,34 +104,21 @@ class Node:
 
     async def start_server(self):
         self.server = await asyncio.start_server(self.client_connected_cb, self.user_host, self.user_port)
-
+        
         self.stop_event = asyncio.Event()
 
         try:
             while not self.stop_event.is_set():
-                if self.is_connected:
-                    await self.send_ping()
-                    # msg = list(map(lambda x: x.decode(), (await self.get(128)).split(b"\x00")))
-
-                    # for el in msg:
-                    #     if el == "":
-                    #        pass
-                    #     else:
-                    #         self.messages.append(("message", self.peer, el))
-
-                    # TODO: стопорит сервер, надо исправить ошибку, чтобы нода читала с self.reader, если можно
-                
-                    self.parent.time = max(0, self.parent.time - 1)
-
                 removing = []
                 
                 for user in self.connected_list:
-                    if user.time == 0:
+                    if user.writer.is_closing() or user.time == 0:
                         self.messages.append(("disconnected", user.peer, ""))
                         removing.append(user)
                         continue
 
-                    data = list(map(lambda x: x.decode(), (await user.get(1024)).split(b"\x00")))
+                    data = await user.get(1024)
+                    data = list(map(lambda x: x.decode(), data.split(b"\x00")))
 
                     for el in data:
                         if el == "":
@@ -140,13 +138,13 @@ class Node:
         except (KeyboardInterrupt, asyncio.exceptions.CancelledError):
             print("closing")
         except Exception as e:
-            print(str(e))
+            self.messages.append(("error", (), str(e)))
         finally:
             self.server.close()
-            self.disconnect()
+            await self.disconnect()
             await self.server.wait_closed()
 
-    def stop_server(self):
+    async def stop_server(self):
         self.stop_event.set()
 
     async def send(self, message: bytes):
@@ -169,7 +167,7 @@ class Node:
         printf("client data", 40)
         print("client:", (self.user_host, self.user_port))
         if self.is_connected:
-            print("connected to server", self.parent.peer)
+            print("connected to server", self.parent.peer, self.parent.time)
         else:
             print("not connected to any server")
         
