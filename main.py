@@ -5,8 +5,6 @@ from node import Node
 async def main(node: Node):
     print(f"connecting to {network_host}:{network_port}")
     await node.connect(network_host, network_port)
-
-    await node.send(b"connected")
     
     await node.start_server()
 
